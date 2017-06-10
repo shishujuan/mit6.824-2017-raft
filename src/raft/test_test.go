@@ -296,11 +296,13 @@ func TestRejoin2B(t *testing.T) {
 	leader1 := cfg.checkOneLeader()
 	cfg.disconnect(leader1)
 
+	//fmt.Printf("Test (2B): disconnect leader1:%v, leader1 set 102 103 104\n", leader1)
 	// make old leader try to agree on some entries
 	cfg.rafts[leader1].Start(102)
 	cfg.rafts[leader1].Start(103)
 	cfg.rafts[leader1].Start(104)
 
+	//fmt.Printf("Test (2B): disconnect leader1:%v, agreement set 103\n", leader1)
 	// new leader commits, also for index=2
 	cfg.one(103, 2)
 
@@ -311,10 +313,12 @@ func TestRejoin2B(t *testing.T) {
 	// old leader connected again
 	cfg.connect(leader1)
 
+	//fmt.Printf("Test (2B): disconnect leader2:%v, connect leader1:%v, set 104 2\n", leader2, leader1)
 	cfg.one(104, 2)
 
 	// all together now
 	cfg.connect(leader2)
+	//fmt.Printf("Test (2B): connect leader2:%v, set 105 3\n", leader2)
 
 	cfg.one(105, servers)
 

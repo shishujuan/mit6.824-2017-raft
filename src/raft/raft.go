@@ -297,18 +297,22 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// AppendEntries 3,4,如果Entries不在log中，则直接append到log。
 	// 如果Entries与本地log冲突，则删除冲突的Entry。
 	if len(args.Entries) > 0 {
+		index := args.PrevLogIndex
 		for i := 0; i < len(args.Entries); i++ {
-			index := args.PrevLogIndex + 1 + i
-			if index > lastLogIndex {
+			index += 1
+			if index > rf.getLastLogIndex() {
 				remainEntries := args.Entries[i:]
 				rf.log = append(rf.log, remainEntries...)
 				break
 			}
 
-			localEntry := rf.log[index]
-			argsEntry := args.Entries[i]
-			if localEntry.Term != argsEntry.Term {
-				rf.log[index] = argsEntry
+			DPrintf("Server(%v) index=%v, rf.log=%v, args=%v", rf.me, index, rf.log, args.Entries)
+			if rf.log[index].Term != args.Entries[i].Term {
+				DPrintf("Term not equal, Server(%v) rf.log=%v, args=%v, prevIndex=%v, index=%v, i=%v", rf.me, rf.log, args.Entries, args.PrevLogIndex, index, i)
+				for len(rf.log) > index {
+					rf.log = rf.log[0 : len(rf.log)-1]
+				}
+				rf.log = append(rf.log, args.Entries[i])
 			}
 		}
 	}
@@ -452,7 +456,7 @@ func (rf *Raft) sendToOnePeerAppendEntries(idx int) {
 		if reply.Success {
 			// AppendEntries成功，更新对应raft实例的nextIndex和matchIndex值, Leader 5.3
 			rf.nextIndex[idx] = nextIndex + len(args.Entries)
-			rf.matchIndex[idx] = rf.nextIndex[idx] - 1
+			rf.matchIndex[idx] = args.PrevLogIndex + len(args.Entries)
 			DPrintf("SendAppendEntries Success(%v => %v), nextIndex:%v, matchIndex:%v", rf.me, idx, rf.nextIndex, rf.matchIndex)
 			rf.advanceCommitIndex()
 			rf.mu.Unlock()
@@ -475,7 +479,6 @@ func (rf *Raft) advanceCommitIndex() {
 	matchIndexes := make([]int, len(rf.matchIndex))
 	copy(matchIndexes, rf.matchIndex)
 	matchIndexes[rf.me] = len(rf.log) - 1
-	//matchIndexes = append(matchIndexes, len(rf.log)-1)
 	sort.Ints(matchIndexes)
 
 	N := matchIndexes[len(rf.peers)/2]

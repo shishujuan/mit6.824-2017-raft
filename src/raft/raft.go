@@ -104,7 +104,6 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 	state            RaftState
-	electionTimeout  time.Duration
 	heartbeatTimeout time.Duration
 	electionTimer    *time.Timer
 	heartbeatTimer   *time.Timer
@@ -226,7 +225,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	// 1
 	if args.Term < rf.currentTerm {
-		//DPrintf("%v not vote %v my term:%v, vote term:%v", rf.me, args.CandidateId, rf.currentTerm, args.Term)
+		DPrintf("%v not vote %v my term:%v, vote term:%v", rf.me, args.CandidateId, rf.currentTerm, args.Term)
 		reply.VoteGranted = false
 		reply.Term = rf.currentTerm
 		return
@@ -234,7 +233,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	//2
 	if rf.votedFor != VOTENULL && rf.votedFor != args.CandidateId {
-		//DPrintf("%v not voteFor %v my term:%v, vote term:%v", rf.me, args.CandidateId, rf.currentTerm, args.Term)
+		DPrintf("votedFor not null %v not voteFor %v my term:%v, vote term:%v", rf.me, args.CandidateId, rf.currentTerm, args.Term)
 		reply.VoteGranted = false
 		reply.Term = rf.currentTerm
 		return
@@ -244,8 +243,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	lastLogIndex := rf.getLastLogIndex()
 	lastLogTerm := rf.getLastLogTerm()
 	if args.LastLogTerm < lastLogTerm || (args.LastLogTerm == lastLogTerm && args.LastLogIndex < lastLogIndex) {
-		//DPrintf("%v not voteFor %v my lastLogTerm(index):%v(%v), vote lastLogTerm(index):%v(%v)", rf.me,
-		//	args.CandidateId, lastLogTerm, lastLogIndex, args.LastLogTerm, args.LastLogIndex)
+		DPrintf("%v not voteFor %v my lastLogTerm(index):%v(%v), vote lastLogTerm(index):%v(%v)", rf.me,
+			args.CandidateId, lastLogTerm, lastLogIndex, args.LastLogTerm, args.LastLogIndex)
 		reply.VoteGranted = false
 		reply.Term = rf.currentTerm
 		return
@@ -254,7 +253,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.votedFor = args.CandidateId
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = true
-	rf.resetTimer(rf.electionTimer, rf.electionTimeout)
+	rf.resetTimer(rf.electionTimer, getRandomElectionTimeout())
 	DPrintf("%v vote %v my term:%d, vote term:%d", rf.me, args.CandidateId, rf.currentTerm, args.Term)
 	return
 }
@@ -330,7 +329,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	reply.Term = rf.currentTerm
 	reply.Success = true
-	rf.resetTimer(rf.electionTimer, rf.electionTimeout)
+	rf.resetTimer(rf.electionTimer, getRandomElectionTimeout())
 	DPrintf("Server(%v) Handle AppendEntries Success:%v", rf.me, rf.log)
 	return
 }
@@ -455,8 +454,8 @@ func (rf *Raft) sendToOnePeerAppendEntries(idx int) {
 
 		if reply.Success {
 			// AppendEntries成功，更新对应raft实例的nextIndex和matchIndex值, Leader 5.3
-			rf.nextIndex[idx] = nextIndex + len(args.Entries)
-			rf.matchIndex[idx] = args.PrevLogIndex + len(args.Entries)
+			rf.matchIndex[idx] = intMax(rf.matchIndex[idx], args.PrevLogIndex+len(args.Entries))
+			rf.nextIndex[idx] = args.PrevLogIndex + len(args.Entries) + 1
 			DPrintf("SendAppendEntries Success(%v => %v), nextIndex:%v, matchIndex:%v", rf.me, idx, rf.nextIndex, rf.matchIndex)
 			rf.advanceCommitIndex()
 			rf.mu.Unlock()
@@ -531,8 +530,10 @@ func (rf *Raft) Kill() {
 	}
 }
 
-func getRandomElectionTimeout() int {
-	return 300 + rand.Intn(100)
+func getRandomElectionTimeout() time.Duration {
+	randomTimeout := 300 + rand.Intn(100)
+	electionTimeout := time.Duration(randomTimeout) * time.Millisecond
+	return electionTimeout
 }
 
 func (rf *Raft) convertToCandidate() {
@@ -543,7 +544,7 @@ func (rf *Raft) convertToCandidate() {
 	rf.currentTerm++
 	rf.state = Candidate
 	rf.votedFor = rf.me
-	rf.resetTimer(rf.electionTimer, rf.electionTimeout)
+	rf.resetTimer(rf.electionTimer, getRandomElectionTimeout())
 }
 
 func (rf *Raft) leaderElection() {
@@ -692,8 +693,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.heartbeatTimeout = time.Duration(100) * time.Millisecond
 	electionTimeout := getRandomElectionTimeout()
-	rf.electionTimeout = time.Duration(electionTimeout) * time.Millisecond
-	rf.electionTimer = time.NewTimer(rf.electionTimeout)
+	rf.electionTimer = time.NewTimer(electionTimeout)
 	DPrintf("server(%v) electionTimeout:%v ms, state:%v, term:%v, votedFor:%v", me, electionTimeout, rf.state, rf.currentTerm, rf.votedFor)
 
 	go rf.leaderElection()

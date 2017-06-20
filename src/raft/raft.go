@@ -305,9 +305,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				break
 			}
 
-			DPrintf("Server(%v) index=%v, rf.log=%v, args=%v", rf.me, index, rf.log, args.Entries)
+			//DPrintf("Server(%v) index=%v, rf.log=%v, args=%v", rf.me, index, rf.log, args.Entries)
 			if rf.log[index].Term != args.Entries[i].Term {
-				DPrintf("Term not equal, Server(%v) rf.log=%v, args=%v, prevIndex=%v, index=%v, i=%v", rf.me, rf.log, args.Entries, args.PrevLogIndex, index, i)
+				DPrintf("Term not equal, Server(%v) rf.log=%v, args=%v, prevIndex=%v, index=%v", rf.me, rf.log, args.Entries, args.PrevLogIndex, index)
 				for len(rf.log) > index {
 					rf.log = rf.log[0 : len(rf.log)-1]
 				}
@@ -318,11 +318,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// Appendentries 5, 设置commitIndex为LeaderCommit和最后一个New Entry的较小值。
 	if args.LeaderCommit > rf.commitIndex {
-		minIndex := rf.getLastLogIndex()
-		if minIndex > args.LeaderCommit {
-			minIndex = args.LeaderCommit
-		}
-		rf.commitIndex = minIndex
+		rf.commitIndex = intMin(args.LeaderCommit, rf.getLastLogIndex())
 	}
 
 	rf.applyLogs()
@@ -330,7 +326,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Term = rf.currentTerm
 	reply.Success = true
 	rf.resetTimer(rf.electionTimer, getRandomElectionTimeout())
-	DPrintf("Server(%v) Handle AppendEntries Success:%v", rf.me, rf.log)
+	DPrintf("Server(%v) term:%v, Handle AppendEntries Success:%v", rf.me, rf.currentTerm, rf.log)
 	return
 }
 
@@ -428,6 +424,13 @@ func (rf *Raft) sendToOnePeerAppendEntries(idx int) {
 			Entries:      rf.log[nextIndex:],
 			LeaderCommit: rf.commitIndex,
 		}
+
+		//这个判断很重要，测试Backup2B出错的时候你就明白了。
+		if rf.state != Leader {
+			rf.mu.Unlock()
+			return
+		}
+
 		rf.mu.Unlock()
 
 		reply := &AppendEntriesReply{}
@@ -447,7 +450,7 @@ func (rf *Raft) sendToOnePeerAppendEntries(idx int) {
 			return
 		}
 
-		if rf.state != Leader {
+		if rf.currentTerm != reply.Term {
 			rf.mu.Unlock()
 			return
 		}
@@ -455,7 +458,7 @@ func (rf *Raft) sendToOnePeerAppendEntries(idx int) {
 		if reply.Success {
 			// AppendEntries成功，更新对应raft实例的nextIndex和matchIndex值, Leader 5.3
 			rf.matchIndex[idx] = intMax(rf.matchIndex[idx], args.PrevLogIndex+len(args.Entries))
-			rf.nextIndex[idx] = args.PrevLogIndex + len(args.Entries) + 1
+			rf.nextIndex[idx] = rf.matchIndex[idx] + 1
 			DPrintf("SendAppendEntries Success(%v => %v), nextIndex:%v, matchIndex:%v", rf.me, idx, rf.nextIndex, rf.matchIndex)
 			rf.advanceCommitIndex()
 			rf.mu.Unlock()
@@ -486,8 +489,8 @@ func (rf *Raft) advanceCommitIndex() {
 	if rf.state == Leader && N > rf.commitIndex && rf.log[N].Term == rf.currentTerm {
 		DPrintf("advanceCommitIndex (%v => %v)", rf.commitIndex, N)
 		rf.commitIndex = N
-		rf.applyLogs()
 	}
+	rf.applyLogs()
 }
 
 func (rf *Raft) startAppendEntries() {

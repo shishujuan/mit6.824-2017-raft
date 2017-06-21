@@ -570,6 +570,8 @@ func (rf *Raft) leaderElection() {
 				DPrintf("sendRequestVote(%v=>%v) args:%v", rf.me, idx, args)
 				ret := rf.sendRequestVote(idx, args, reply)
 				if ret {
+					rf.mu.Lock()
+					defer rf.mu.Unlock()
 
 					if rf.state != Candidate {
 						return
@@ -630,7 +632,6 @@ func (rf *Raft) getLastLogTerm() int {
 }
 
 func (rf *Raft) convertToLeader() {
-	rf.mu.Lock()
 	DPrintf("Convert server(%v) state(%v=>leader) term %v", rf.me,
 		rf.state.String(), rf.currentTerm)
 	rf.disableTimer(rf.electionTimer) // 成为leader之后，关闭electionTimeout
@@ -643,9 +644,8 @@ func (rf *Raft) convertToLeader() {
 	}
 	DPrintf("Service(%v) Init nextIndex:%v", rf.me, rf.nextIndex)
 	rf.matchIndex = make([]int, len(rf.peers))
-	rf.mu.Unlock()
 
-	rf.startHeartbeart()
+	go rf.startHeartbeart()
 }
 
 func (rf *Raft) startHeartbeart() {
@@ -674,8 +674,6 @@ func (rf *Raft) startHeartbeart() {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{}
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me

@@ -450,11 +450,6 @@ func (rf *Raft) sendToOnePeerAppendEntries(idx int) {
 			return
 		}
 
-		if rf.currentTerm != reply.Term {
-			rf.mu.Unlock()
-			return
-		}
-
 		if reply.Success {
 			// AppendEntries成功，更新对应raft实例的nextIndex和matchIndex值, Leader 5.3
 			rf.matchIndex[idx] = intMax(rf.matchIndex[idx], args.PrevLogIndex+len(args.Entries))

@@ -24,6 +24,8 @@ import "time"
 import "sync/atomic"
 import "fmt"
 import "sort"
+import "bytes"
+import "encoding/gob"
 
 // import "bytes"
 // import "encoding/gob"
@@ -155,6 +157,15 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
+	DPrintf("persist:%v, %v, %v", rf.currentTerm, rf.votedFor, rf.log)
+	w := new(bytes.Buffer)
+	e := gob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.log)
+	data := w.Bytes()
+	DPrintf("persist data:%v", data)
+	rf.persister.SaveRaftState(data)
 }
 
 //
@@ -170,6 +181,13 @@ func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
+	DPrintf("before readPersist:%v", rf.log)
+	r := bytes.NewBuffer(data)
+	d := gob.NewDecoder(r)
+	d.Decode(&rf.currentTerm)
+	d.Decode(&rf.votedFor)
+	d.Decode(&rf.log)
+	DPrintf("readPersist, rf.currentTerm:%v, votedFor:%v, log:%v", rf.currentTerm, rf.votedFor, rf.log)
 }
 
 //
@@ -261,6 +279,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	defer rf.persist()
 
 	// all servers
 	if args.Term > rf.currentTerm {
@@ -402,6 +421,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	//注意append entry必须与index设置在一个加锁位置，如果推迟append，会导致concurrent start失败。
 	rf.log = append(rf.log, entry)
+	rf.persist()
 	rf.mu.Unlock()
 
 	DPrintf("Server(%v) Start command:%v, term:%v, index:%v\n", rf.me, command, term, index)
@@ -537,6 +557,7 @@ func getRandomElectionTimeout() time.Duration {
 func (rf *Raft) convertToCandidate() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	defer rf.persist()
 	DPrintf("Convert server(%v) state(%v=>candidate) term(%v)", rf.me,
 		rf.state.String(), rf.currentTerm)
 	rf.currentTerm++
@@ -596,6 +617,7 @@ func (rf *Raft) leaderElection() {
 }
 
 func (rf *Raft) convertToFollower(term int) {
+	defer rf.persist()
 	DPrintf("Convert server(%v) state(%v=>follower) term(%v => %v)", rf.me,
 		rf.state.String(), rf.currentTerm, term)
 	rf.state = Follower
@@ -632,6 +654,7 @@ func (rf *Raft) getLastLogTerm() int {
 }
 
 func (rf *Raft) convertToLeader() {
+	defer rf.persist()
 	DPrintf("Convert server(%v) state(%v=>leader) term %v", rf.me,
 		rf.state.String(), rf.currentTerm)
 	rf.disableTimer(rf.electionTimer) // 成为leader之后，关闭electionTimeout
@@ -681,7 +704,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// Your initialization code here (2A, 2B, 2C).
 	rf.currentTerm = 0
 	rf.votedFor = VOTENULL
-	rf.log = make([]*LogEntry, 1)
+
+	//如果slice的第一个元素为nil会导致gob Encode/Decode为空,这里改为一个空的LogEntry便于编码。
+	rf.log = make([]*LogEntry, 0)
+	emptylog := &LogEntry{}
+	rf.log = append(rf.log, emptylog)
+
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 	rf.state = Follower
